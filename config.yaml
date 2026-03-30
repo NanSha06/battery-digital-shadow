@@ -11,6 +11,12 @@ ocv:
 ecm:
   soc_bins: 10
   temp_bins: 5
+  parameters:
+    R0: 0.015
+    R1: 0.01
+    C1: 2500.0
+    R2: 0.02
+    C2: 12000.0
   r0_bounds: [0.001, 0.5]
   r1_bounds: [0.001, 0.5]
   c1_bounds: [100, 100000]
