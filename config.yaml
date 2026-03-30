@@ -1,0 +1,59 @@
+dataset:
+  data_path: ./data/raw/
+  cell_ids: [B0005, B0006, B0007]
+  test_cell: B0018
+  current_hysteresis: 0.05
+
+ocv:
+  soc_knots: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  hysteresis_coeff: 0.005
+
+ecm:
+  soc_bins: 10
+  temp_bins: 5
+  r0_bounds: [0.001, 0.5]
+  r1_bounds: [0.001, 0.5]
+  c1_bounds: [100, 100000]
+  r2_bounds: [0.001, 0.5]
+  c2_bounds: [100, 100000]
+  de_popsize: 10
+  de_maxiter: 300
+
+ekf:
+  Q_diag: [1e-6, 1e-8, 1e-8]
+  R: 1e-4
+  P0_diag: [0.01, 0.001, 0.001]
+
+wrls:
+  forgetting_factor: 0.98
+
+cusum:
+  k0: 0.002
+  threshold_h: 5.0
+
+gp:
+  num_inducing: 100
+  lr: 0.01
+  epochs: 200
+
+lstm:
+  hidden: 64
+  layers: 2
+  window: 20
+  lr: 0.001
+  epochs: 100
+
+ageing:
+  a: 0.01
+  b: 0.002
+  c: 0.001
+  C0: 2.0
+  beta: 0.15
+  n: 0.6
+  dod_gamma: 1.2
+  Ea: 30000
+  R_gas: 8.314
+
+monte_carlo:
+  n_particles: 1000
+  eol_threshold: 0.8
