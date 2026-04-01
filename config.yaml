@@ -63,3 +63,13 @@ ageing:
 monte_carlo:
   n_particles: 1000
   eol_threshold: 0.8
+
+ica:
+  savgol_window: 21
+  savgol_polyorder: 3
+  peak_min_height: 0.25
+  peak_min_distance: 30
+
+drt:
+  lambda_reg: 1.0e-3
+  n_tau: 50
