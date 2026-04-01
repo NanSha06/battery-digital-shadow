@@ -73,3 +73,8 @@ ica:
 drt:
   lambda_reg: 1.0e-3
   n_tau: 50
+
+gp:
+  num_inducing: 100
+  lr: 0.01
+  epochs: 200
