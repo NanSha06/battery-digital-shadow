@@ -2,8 +2,8 @@
   "cell": "B0018",
   "n_cycles_validated": 132,
   "smoke_mode": false,
-  "elapsed_seconds": 84.5,
-  "soc_rmse_mean_pct": 0.1259,
+  "elapsed_seconds": 143.4,
+  "soc_rmse_mean_pct": 0.0,
   "soc_rmse_target_pct": 2.0,
   "soc_rmse_passed": true,
   "soh_mae_mean": 0.0,
@@ -13,27 +13,27 @@
       "true_rul": 50,
       "pred_rul": 40.9,
       "error": 9.1,
-      "in_90ci": true
+      "in_90ci": false
     },
     "at_50pct_life": {
       "cycle": 66,
       "true_rul": 10,
       "pred_rul": 11.8,
       "error": 1.8,
-      "in_90ci": true
+      "in_90ci": false
     },
     "at_80pct_life": {
       "cycle": 105,
       "true_rul": 0,
       "pred_rul": 0.0,
       "error": 0.0,
-      "in_90ci": true
+      "in_90ci": false
     }
   },
-  "rul_90ci_coverage": 0.9773,
+  "rul_90ci_coverage": 0.0,
   "rul_90ci_target": 0.9,
-  "rul_90ci_passed": true,
+  "rul_90ci_passed": false,
   "cusum_false_triggers": 0,
   "cusum_trigger_cycles": [],
-  "gp_coverage_2sigma": 0.8333
+  "gp_coverage_2sigma": 1.0
 }
