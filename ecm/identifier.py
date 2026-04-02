@@ -8,8 +8,7 @@ from typing import Any
 import numpy as np
 from scipy.optimize import differential_evolution
 
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from data.loader import Cycle
 from ecm.model import AkimaOCVModel, TwoRCTheveninECM

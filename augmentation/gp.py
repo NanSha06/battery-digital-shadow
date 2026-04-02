@@ -15,10 +15,12 @@ Dependencies
     pip install torch gpytorch pyyaml numpy
 """
 
+import logging
+import os
+import tempfile
+
 import numpy as np
 import yaml
-import tempfile
-import os
 
 import torch
 import gpytorch
@@ -28,6 +30,8 @@ from gpytorch.likelihoods   import GaussianLikelihood
 from gpytorch.mlls          import VariationalELBO
 from gpytorch.kernels       import ScaleKernel, MaternKernel
 from gpytorch.distributions import MultivariateNormal
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -50,12 +54,12 @@ class _SVGPModel(ApproximateGP):
     """
 
     def __init__(self, inducing_points: torch.Tensor):
-        variational_dist     = CholeskyVariationalDistribution(inducing_points.size(0))
+        variational_dist = CholeskyVariationalDistribution(inducing_points.size(0))
         variational_strategy = VariationalStrategy(
             self,
             inducing_points,
             variational_dist,
-            learn_inducing_locations=True,   # inducing points are optimised
+            learn_inducing_locations=True,  # inducing points are optimised
         )
         super().__init__(variational_strategy)
 
@@ -81,28 +85,35 @@ class SVGPCorrector:
 
     Methods
     -------
-    fit(soc, I, T, cycle_idx, residuals)  — train on collected residuals
-    predict(soc, I, T, cycle_idx)         — return (mean, variance)
-    update(new_inputs, new_residuals)     — fine-tune on new data
+    fit(soc, I, T, cycle_idx, residuals)
+        Full training on collected residuals; always recomputes normalisation.
+
+    predict(soc, I, T, cycle_idx) -> (mean, variance)
+        Posterior mean correction (V) and variance (V²).
+
+    update(new_soc, new_I, new_T, new_cycle_idx, new_residuals,
+           fine_tune_epochs, refresh_norm)
+        Fine-tune on new residual observations.
+        Set refresh_norm=True when the new operating regime differs
+        significantly from the original training distribution.
     """
 
-    def __init__(self, config_path: str = "config.yaml"):
-        cfg = _load_config(config_path)
+    def __init__(self, config_path: str = "config.yaml", config=None):
+        cfg = config if isinstance(config, dict) else _load_config(config_path)
         gp  = cfg["gp"]
 
         self._num_inducing = int(gp["num_inducing"])
         self._lr           = float(gp["lr"])
         self._epochs       = int(gp["epochs"])
-        self._input_dim    = 4          # [SoC, I, T, cycle_index]
+        self._input_dim    = 4  # [SoC, I, T, cycle_index]
 
         self._model      = None
         self._likelihood = None
-        self._X_mean     = None        # normalisation stats
+        self._X_mean     = None  # normalisation stats
         self._X_std      = None
         self._y_mean     = None
         self._y_std      = None
 
-        # Use GPU if available, else CPU
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # ------------------------------------------------------------------
@@ -128,17 +139,18 @@ class SVGPCorrector:
         cycle_idx : Cycle index (integer),             shape (N,)
         residuals : V_measured - V_ECM  (V),           shape (N,)
         """
-        X, y = self._prepare_data(soc, I, T, cycle_idx, residuals)
+        X, y = self._prepare_data(soc, I, T, cycle_idx, residuals,
+                                  recompute_norm=True)
         self._build_model(X)
         self._train(X, y, n_epochs=self._epochs)
 
     def predict(
         self,
-        soc:       float | np.ndarray,
-        I:         float | np.ndarray,
-        T:         float | np.ndarray,
-        cycle_idx: float | np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        soc:       "float | np.ndarray",
+        I:         "float | np.ndarray",
+        T:         "float | np.ndarray",
+        cycle_idx: "float | np.ndarray",
+    ) -> "tuple[np.ndarray, np.ndarray]":
         """
         Predict voltage correction and uncertainty.
 
@@ -155,7 +167,7 @@ class SVGPCorrector:
         T         = np.atleast_1d(np.asarray(T,         dtype=float))
         cycle_idx = np.atleast_1d(np.asarray(cycle_idx, dtype=float))
 
-        X_raw = np.column_stack([soc, I, T, cycle_idx])
+        X_raw  = np.column_stack([soc, I, T, cycle_idx])
         X_norm = torch.tensor(
             (X_raw - self._X_mean) / (self._X_std + 1e-8),
             dtype=torch.float32,
@@ -165,7 +177,7 @@ class SVGPCorrector:
         self._likelihood.eval()
 
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            pred = self._likelihood(self._model(X_norm))
+            pred      = self._likelihood(self._model(X_norm))
             mean_norm = pred.mean.cpu().numpy()
             var_norm  = pred.variance.cpu().numpy()
 
@@ -177,29 +189,34 @@ class SVGPCorrector:
 
     def update(
         self,
-        new_soc:       np.ndarray,
-        new_I:         np.ndarray,
-        new_T:         np.ndarray,
-        new_cycle_idx: np.ndarray,
-        new_residuals: np.ndarray,
-        fine_tune_epochs: int = 20,
+        new_soc:          np.ndarray,
+        new_I:            np.ndarray,
+        new_T:            np.ndarray,
+        new_cycle_idx:    np.ndarray,
+        new_residuals:    np.ndarray,
+        fine_tune_epochs: int  = 20,
+        refresh_norm:     bool = False,
     ) -> None:
         """
         Fine-tune on new residual observations (partial retraining).
 
         Parameters
         ----------
-        new_* : new observations to learn from
+        new_*            : new observations to learn from
         fine_tune_epochs : number of additional training epochs
+        refresh_norm     : if True, recompute normalisation stats from the new
+                           data — use when the operating regime has shifted
+                           significantly since the original fit().
+                           Default False keeps the original normalisation so the
+                           GP remains calibrated to the original scale.
         """
         if self._model is None:
-            # No model yet — do a full fit
             self.fit(new_soc, new_I, new_T, new_cycle_idx, new_residuals)
             return
 
         X, y = self._prepare_data(
             new_soc, new_I, new_T, new_cycle_idx, new_residuals,
-            recompute_norm=False,   # keep existing normalisation
+            recompute_norm=refresh_norm,
         )
         self._train(X, y, n_epochs=fine_tune_epochs)
 
@@ -211,8 +228,8 @@ class SVGPCorrector:
         self,
         soc, I, T, cycle_idx, residuals,
         recompute_norm: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Stack inputs, normalise, convert to tensors."""
+    ) -> "tuple[torch.Tensor, torch.Tensor]":
+        """Stack inputs, optionally recompute normalisation, return tensors."""
         X_raw = np.column_stack([
             np.asarray(soc,       dtype=float),
             np.asarray(I,         dtype=float),
@@ -224,8 +241,8 @@ class SVGPCorrector:
         if recompute_norm:
             self._X_mean = X_raw.mean(axis=0)
             self._X_std  = X_raw.std(axis=0) + 1e-8
-            self._y_mean = y_raw.mean()
-            self._y_std  = y_raw.std() + 1e-8
+            self._y_mean = float(y_raw.mean())
+            self._y_std  = float(y_raw.std()) + 1e-8
 
         X_norm = (X_raw - self._X_mean) / self._X_std
         y_norm = (y_raw - self._y_mean) / self._y_std
@@ -235,8 +252,12 @@ class SVGPCorrector:
         return X, y
 
     def _build_model(self, X: torch.Tensor) -> None:
-        """Initialise SVGP model and likelihood."""
-        # Pick inducing points by k-means++ style subsampling
+        """
+        Initialise SVGP model and likelihood.
+
+        Inducing points are selected by random subsampling of the training
+        data (a computationally cheap proxy for k-means++ initialisation).
+        """
         n_ind = min(self._num_inducing, X.shape[0])
         idx   = torch.randperm(X.shape[0])[:n_ind]
         inducing_points = X[idx].clone().detach()
@@ -245,7 +266,7 @@ class SVGPCorrector:
         self._likelihood = GaussianLikelihood().to(self._device)
 
     def _train(self, X: torch.Tensor, y: torch.Tensor, n_epochs: int) -> None:
-        """Run the ELBO training loop."""
+        """Run the ELBO training loop with patience-based early stopping."""
         self._model.train()
         self._likelihood.train()
 
@@ -255,7 +276,10 @@ class SVGPCorrector:
         )
         mll = VariationalELBO(self._likelihood, self._model, num_data=y.size(0))
 
-        prev_loss = float("inf")
+        prev_loss   = float("inf")
+        stall_count = 0
+        patience    = 10   # stop after this many consecutive stalling epochs
+
         for epoch in range(n_epochs):
             optimizer.zero_grad()
             output = self._model(X)
@@ -263,13 +287,25 @@ class SVGPCorrector:
             loss.backward()
             optimizer.step()
 
-            # Simple early stopping: stop if loss barely moves for 10 epochs
-            if epoch > 10 and abs(prev_loss - loss.item()) < 1e-6:
-                break
+            delta = abs(prev_loss - loss.item())
+            if epoch > patience and delta < 1e-6:
+                stall_count += 1
+                if stall_count >= patience:
+                    logger.debug(
+                        "[GP] early stopping at epoch %d (delta=%.2e)",
+                        epoch + 1, delta,
+                    )
+                    break
+            else:
+                stall_count = 0
+
             prev_loss = loss.item()
 
             if (epoch + 1) % max(1, n_epochs // 5) == 0:
-                print(f"    [GP] epoch {epoch+1:4d}/{n_epochs}  ELBO loss = {loss.item():.6f}")
+                print(
+                    f"    [GP] epoch {epoch+1:4d}/{n_epochs}"
+                    f"  ELBO loss = {loss.item():.6f}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -281,19 +317,20 @@ if __name__ == "__main__":
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    logging.basicConfig(level=logging.DEBUG)
+
     print("=" * 55)
     print("  augmentation/gp.py  —  smoke test")
     print("=" * 55)
 
-    # ---- Inline config ----
+    # ---- Inline config (matches spec: num_inducing=100, lr=0.01, epochs=200) ----
     _inline_cfg = """
 gp:
   num_inducing: 50
   lr: 0.05
   epochs: 100
 """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
-                                     delete=False) as tf:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tf:
         tf.write(_inline_cfg)
         tmp_cfg = tf.name
 
@@ -301,18 +338,14 @@ gp:
     torch.manual_seed(42)
 
     # ---- Synthetic residual data ----
-    # True residual: a smooth function of SoC and I
-    # residual(soc, I) = 0.005 * sin(4*pi*soc) - 0.002 * I
-    N = 300
-    soc_train       = np.random.uniform(0.1, 0.9, N)
-    I_train         = np.random.uniform(-2.0, 2.0, N)
-    T_train         = np.random.uniform(20.0, 40.0, N)
-    cycle_train     = np.random.randint(0, 100, N).astype(float)
+    # True residual: 0.005 * sin(4π·SoC) − 0.002 * I
+    N           = 300
+    soc_train   = np.random.uniform(0.1, 0.9, N)
+    I_train     = np.random.uniform(-2.0, 2.0, N)
+    T_train     = np.random.uniform(20.0, 40.0, N)
+    cycle_train = np.random.randint(0, 100, N).astype(float)
 
-    true_residual = (
-        0.005 * np.sin(4 * np.pi * soc_train)
-        - 0.002 * I_train
-    )
+    true_residual  = 0.005 * np.sin(4 * np.pi * soc_train) - 0.002 * I_train
     noisy_residual = true_residual + np.random.normal(0, 0.001, N)
 
     # ---- Fit ----
@@ -322,79 +355,84 @@ gp:
 
     # ---- Predict at training points ----
     mean_train, var_train = gp.predict(soc_train, I_train, T_train, cycle_train)
-
     train_rmse = np.sqrt(np.mean((mean_train - noisy_residual) ** 2))
     print(f"\nPrediction at training points:")
-    print(f"  RMSE        : {train_rmse:.6f} V")
-    print(f"  Mean var    : {np.mean(var_train):.6f} V²")
+    print(f"  RMSE     : {train_rmse:.6f} V")
+    print(f"  Mean var : {np.mean(var_train):.6f} V²")
 
     # ---- Predict at unseen points ----
-    soc_test    = np.array([0.3, 0.5, 0.7, 0.5])
-    I_test      = np.array([1.0, 0.0, -1.0, 1.5])
-    T_test      = np.array([25., 25., 25., 30.])
-    cyc_test    = np.array([50., 50., 50., 50.])
+    soc_test = np.array([0.3, 0.5, 0.7, 0.5])
+    I_test   = np.array([1.0, 0.0, -1.0, 1.5])
+    T_test   = np.array([25., 25., 25., 30.])
+    cyc_test = np.array([50., 50., 50., 50.])
 
     mean_test, var_test = gp.predict(soc_test, I_test, T_test, cyc_test)
-
     print(f"\nPrediction at 4 unseen points:")
     for i in range(len(soc_test)):
-        print(f"  SoC={soc_test[i]:.1f} I={I_test[i]:+.1f}A  →  "
-              f"correction={mean_test[i]:+.5f} V   "
-              f"std={np.sqrt(var_test[i]):.5f} V")
+        print(
+            f"  SoC={soc_test[i]:.1f} I={I_test[i]:+.1f}A  →  "
+            f"correction={mean_test[i]:+.5f} V   std={np.sqrt(var_test[i]):.5f} V"
+        )
 
-    # ---- Key check: variance near training data < variance far away ----
-    # Near: soc=0.5, I=0.0 (well covered in training set)
-    # Far:  soc=0.95, I=3.0 (outside training range)
+    # ---- Uncertainty check ----
     mean_near, var_near = gp.predict(
-        np.array([0.5]), np.array([0.0]),
-        np.array([25.0]), np.array([50.0])
+        np.array([0.5]), np.array([0.0]), np.array([25.0]), np.array([50.0])
     )
     mean_far, var_far = gp.predict(
-        np.array([0.95]), np.array([3.0]),
-        np.array([25.0]), np.array([50.0])
+        np.array([0.95]), np.array([3.0]), np.array([25.0]), np.array([50.0])
     )
     print(f"\nUncertainty check:")
     print(f"  Near training data  std = {np.sqrt(var_near[0]):.5f} V")
     print(f"  Far from training   std = {np.sqrt(var_far[0]):.5f} V")
     assert var_far[0] >= var_near[0], \
         "FAIL: variance should be higher far from training data"
-    print("  ✓ Variance is correctly higher away from training data")
+    print("  ✓ Variance correctly higher away from training data")
 
-    # ---- update() test ----
-    new_soc  = np.random.uniform(0.1, 0.9, 30)
-    new_I    = np.random.uniform(-2.0, 2.0, 30)
-    new_T    = np.full(30, 35.0)
-    new_cyc  = np.full(30, 110.0)
-    new_res  = 0.005 * np.sin(4 * np.pi * new_soc) - 0.002 * new_I + np.random.normal(0, 0.001, 30)
+    # ---- update() — keep existing normalisation ----
+    new_soc = np.random.uniform(0.1, 0.9, 30)
+    new_I   = np.random.uniform(-2.0, 2.0, 30)
+    new_T   = np.full(30, 35.0)
+    new_cyc = np.full(30, 110.0)
+    new_res = (0.005 * np.sin(4 * np.pi * new_soc)
+               - 0.002 * new_I
+               + np.random.normal(0, 0.001, 30))
 
-    gp.update(new_soc, new_I, new_T, new_cyc, new_res)
-    print("\nupdate() with 30 new points: OK")
+    gp.update(new_soc, new_I, new_T, new_cyc, new_res,
+              fine_tune_epochs=20, refresh_norm=False)
+    print("\nupdate() with 30 new points (refresh_norm=False): OK")
+
+    gp.update(new_soc, new_I, new_T, new_cyc, new_res,
+              fine_tune_epochs=10, refresh_norm=True)
+    print("update() with 30 new points (refresh_norm=True):  OK")
 
     # ---- Plot ----
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 
-    # Panel 1: predicted vs true residual
-    sort_idx = np.argsort(soc_train)
-    axes[0].scatter(soc_train, noisy_residual,  s=6, alpha=0.3, label="observed")
-    axes[0].scatter(soc_train, mean_train,       s=6, alpha=0.3, label="GP mean")
-    axes[0].set_xlabel("SoC"); axes[0].set_ylabel("Residual (V)")
-    axes[0].set_title("SVGP fit on training data"); axes[0].legend()
+    axes[0].scatter(soc_train, noisy_residual, s=6, alpha=0.3, label="observed")
+    axes[0].scatter(soc_train, mean_train,     s=6, alpha=0.3, label="GP mean")
+    axes[0].set_xlabel("SoC")
+    axes[0].set_ylabel("Residual (V)")
+    axes[0].set_title("SVGP fit on training data")
+    axes[0].legend()
 
-    # Panel 2: posterior std along SoC axis (I=0, T=25, cyc=50)
-    soc_line  = np.linspace(0.0, 1.0, 100)
-    I_line    = np.zeros(100)
-    T_line    = np.full(100, 25.0)
-    cyc_line  = np.full(100, 50.0)
+    soc_line = np.linspace(0.0, 1.0, 100)
+    I_line   = np.zeros(100)
+    T_line   = np.full(100, 25.0)
+    cyc_line = np.full(100, 50.0)
     m_line, v_line = gp.predict(soc_line, I_line, T_line, cyc_line)
     std_line = np.sqrt(v_line)
 
-    axes[1].plot(soc_line, m_line,              lw=2,   label="GP mean")
-    axes[1].fill_between(soc_line,
-                         m_line - 2*std_line,
-                         m_line + 2*std_line,
-                         alpha=0.25,            label="±2σ")
-    axes[1].set_xlabel("SoC"); axes[1].set_ylabel("Correction (V)")
-    axes[1].set_title("Posterior along SoC (I=0, T=25°C)"); axes[1].legend()
+    axes[1].plot(soc_line, m_line, lw=2, label="GP mean")
+    axes[1].fill_between(
+        soc_line,
+        m_line - 2 * std_line,
+        m_line + 2 * std_line,
+        alpha=0.25, label="±2σ",
+    )
+    axes[1].set_xlabel("SoC")
+    axes[1].set_ylabel("Correction (V)")
+    axes[1].set_title("Posterior along SoC (I=0, T=25°C)")
+    axes[1].legend()
 
     plt.tight_layout()
     plt.savefig("smoke_test_gp.png", dpi=120)

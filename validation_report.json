@@ -1,0 +1,46 @@
+{
+  "cell": "B0018",
+  "n_cycles_validated": 132,
+  "smoke_mode": false,
+  "elapsed_seconds": 202.7,
+  "soc_rmse_mean_pct": 0.1542,
+  "soc_rmse_target_pct": 2.0,
+  "soc_rmse_passed": true,
+  "soh_mae_mean": 0.056541,
+  "rul_errors": {
+    "at_20pct_life": {
+      "cycle": 26,
+      "true_rul": 50,
+      "pred_rul": 629.7,
+      "error": 579.7,
+      "in_90ci": true
+    },
+    "at_50pct_life": {
+      "cycle": 66,
+      "true_rul": 10,
+      "pred_rul": 384.3,
+      "error": 374.3,
+      "in_90ci": true
+    },
+    "at_80pct_life": {
+      "cycle": 105,
+      "true_rul": 0,
+      "pred_rul": 347.7,
+      "error": 347.7,
+      "in_90ci": true
+    }
+  },
+  "rul_90ci_coverage": 0.9773,
+  "rul_90ci_target": 0.9,
+  "rul_90ci_passed": true,
+  "cusum_false_triggers": 6,
+  "cusum_trigger_cycles": [
+    16,
+    34,
+    55,
+    76,
+    95,
+    114
+  ],
+  "gp_coverage_2sigma": 0.0
+}

@@ -1,3 +1,4 @@
+Q_nom_Ah: 2.0  # nominal cell capacity [Ah] used for SoH = C_max / Q_nom
 dataset:
   data_path: ./data/raw/
   cell_ids: [B0005, B0006, B0007]
@@ -32,6 +33,7 @@ ekf:
 
 wrls:
   forgetting_factor: 0.98
+  P_init: 1.0e-3  # WRLS initial covariance; 1e-3 gives stable gain for R0~0.015Ω
 
 cusum:
   k0: 0.002
