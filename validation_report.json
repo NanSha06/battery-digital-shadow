@@ -2,7 +2,7 @@
   "cell": "B0018",
   "n_cycles_validated": 132,
   "smoke_mode": false,
-  "elapsed_seconds": 143.4,
+  "elapsed_seconds": 84.8,
   "soc_rmse_mean_pct": 0.0,
   "soc_rmse_target_pct": 2.0,
   "soc_rmse_passed": true,

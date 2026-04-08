@@ -379,7 +379,7 @@ def run_validation(
         for _attr in ("cusum_h", "_cusum_h", "h_cusum"):
             if hasattr(shadow, _attr):
                 setattr(shadow, _attr, _new_h)
-        print(f"  CUSUM threshold raised: {_cusum_h:.1f} → {_new_h:.1f}"
+        print(f"  CUSUM threshold raised: {_cusum_h:.1f} -> {_new_h:.1f}"
               " (suppress steady-state false triggers)")
 
     # ---- Main validation loop --------------------------------------------
@@ -591,6 +591,13 @@ def _plot_validation(
         return
 
     ki  = [c["cycle_idx"] for c in cycles]
+    mean_voltages = []
+    mean_currents = []
+    for cycle in cycles:
+        v_arr = np.asarray(cycle.get("V", []), dtype=float)
+        i_arr = np.asarray(cycle.get("I", []), dtype=float)
+        mean_voltages.append(float(np.nanmean(v_arr)) if v_arr.size else np.nan)
+        mean_currents.append(float(np.nanmean(np.abs(i_arr))) if i_arr.size else np.nan)
 
     # ---- ECM data quality check ----
     # R0 is real from EKF; R1/R2 are derived from R0 in the loop above.
@@ -689,51 +696,93 @@ def _plot_validation(
 
     # Panel 5: ECM parameter aging  (FIX G)
     ax = axes[2, 0]
-    # Convert to mΩ for readability
-    r0_mOhm = r0_arr * 1000
-    r1_mOhm = r1_arr * 1000
-    r2_mOhm = r2_arr * 1000
-
-    ax.plot(ki, r0_mOhm, lw=1.5, color="#d62728", label="R₀  (series / Ω-contact)")
-    ax.plot(ki, r1_mOhm, lw=1.5, color="#ff7f0e", label="R₁  (charge-transfer)")
-    ax.plot(ki, r2_mOhm, lw=1.5, color="#1f77b4", label="R₂  (diffusion / Warburg)")
+    ax.plot(ki, r0_arr, lw=1.5, color="#d62728", label="R0  (series / contact)")
+    ax.plot(ki, r1_arr, lw=1.5, color="#ff7f0e", label="R1  (charge-transfer)")
+    ax.plot(ki, r2_arr, lw=1.5, color="#1f77b4", label="R2  (diffusion / Warburg)")
     # Set y-axis to span 0 → 1.15 × max so all three curves are clearly visible
-    all_r = np.concatenate([r0_mOhm, r1_mOhm, r2_mOhm])
+    all_r = np.concatenate([r0_arr, r1_arr, r2_arr])
     all_r = all_r[np.isfinite(all_r)]
     if len(all_r):
         ax.set_ylim(0, float(np.nanmax(all_r)) * 1.15)
     ax.set_xlabel("Cycle")
-    ax.set_ylabel("Resistance (mΩ)")
+    ax.set_ylabel("Resistance (Ω)")
     ax.set_title(f"ECM Parameter Aging\n({ecm_source})")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
-    # Panel 6: dR/dcycle — rate of degradation (FIX G bonus)
+    # Panel 6: Resistance degradation with electrical behavior overlays
     ax = axes[2, 1]
+    from scipy.ndimage import gaussian_filter1d
+
     if len(ki) > 5:
         ki_arr = np.array(ki, dtype=float)
-        dr0 = np.gradient(r0_mOhm, ki_arr)
-        dr1 = np.gradient(r1_mOhm, ki_arr)
-        dr2 = np.gradient(r2_mOhm, ki_arr)
-        # Gaussian smooth (σ≈3 cycles) for a clean trend line
-        from scipy.ndimage import gaussian_filter1d
+        dr0 = np.gradient(r0_arr, ki_arr)
+        dr1 = np.gradient(r1_arr, ki_arr)
+        dr2 = np.gradient(r2_arr, ki_arr)
+
         sigma = max(2.0, len(ki) / 50.0)
-        ax.plot(ki, gaussian_filter1d(dr0, sigma), lw=1.4,
-                color="#d62728", label="dR₀/dcycle")
-        ax.plot(ki, gaussian_filter1d(dr1, sigma), lw=1.4,
-                color="#ff7f0e", label="dR₁/dcycle")
-        ax.plot(ki, gaussian_filter1d(dr2, sigma), lw=1.4,
-                color="#1f77b4", label="dR₂/dcycle")
+        l0, = ax.plot(ki, gaussian_filter1d(dr0, sigma), lw=1.8,
+                      color="#d62728", label="dR0/dcycle")
+        l1, = ax.plot(ki, gaussian_filter1d(dr1, sigma), lw=1.8,
+                      color="#ff7f0e", label="dR1/dcycle")
+        l2, = ax.plot(ki, gaussian_filter1d(dr2, sigma), lw=1.8,
+                      color="#1f77b4", label="dR2/dcycle")
+    else:
+        l0 = l1 = l2 = None
+
     ax.axhline(0, color="black", lw=0.8, ls="--")
     ax.set_xlabel("Cycle")
-    ax.set_ylabel("dR/dcycle  (mΩ / cycle)")
-    ax.set_title("Resistance Degradation Rate")
-    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    ax.set_ylabel("dR/dcycle  (Ω / cycle)", color="black")
+    ax.grid(alpha=0.3)
 
-    plt.tight_layout()
-    plt.savefig("validation_figure.png", dpi=150, bbox_inches="tight")
+    # Keep the overlay axes visually separate from the dR axis.
+    # The voltage/current series are almost flat; if they visually mimic the
+    # dR spikes, the plot is misleading.
+    ax_v = ax.twinx()
+    ax_v.patch.set_alpha(0.0)
+    ax_v.set_zorder(ax.get_zorder() + 1)
+    lv, = ax_v.plot(ki, mean_voltages, lw=1.4, color="#2ca02c",
+                    ls="-.", alpha=0.85, label="Mean Voltage (V)")
+    ax_v.set_ylabel("Mean Voltage (V)", color="#2ca02c")
+    ax_v.tick_params(axis="y", labelcolor="#2ca02c", colors="#2ca02c")
+    ax_v.spines["right"].set_edgecolor("#2ca02c")
+    _set_axis_limits_from_series(ax_v, mean_voltages, min_pad=0.01)
+
+    # Second twin axis — mean |current| per cycle (offset right spine)
+    ax_i = ax.twinx()
+    ax_i.spines["right"].set_position(("axes", 1.14))
+    ax_i.patch.set_alpha(0.0)
+    ax_i.set_zorder(ax.get_zorder() + 2)
+    ax_i.spines["right"].set_edgecolor("#9467bd")
+    li, = ax_i.plot(ki, mean_currents, lw=1.4, color="#9467bd",
+                    ls=":", alpha=0.85, label="Mean |Current| (A)")
+    ax_i.set_ylabel("Mean |Current| (A)", color="#9467bd")
+    ax_i.tick_params(axis="y", labelcolor="#9467bd", colors="#9467bd")
+    _set_axis_limits_from_series(ax_i, mean_currents, min_pad=0.02)
+
+    # Combined legend
+    handles = [h for h in [l0, l1, l2, lv, li] if h is not None]
+    ax.legend(handles=handles, fontsize=7, loc="upper right")
+    ax.set_title("Resistance Degradation Rate\nwith V and |I| on separate right-side axes")
+
+    fig.tight_layout(rect=[0, 0, 0.93, 1])
+    out = "validation_figure.png"
+    fig.savefig(out, dpi=130, bbox_inches="tight")
     plt.close(fig)
-    print("  Figure saved -> validation_figure.png")
+    print(f"\n  Figure saved -> {out}")
 
+
+def _set_axis_limits_from_series(ax, values: list[float] | np.ndarray, min_pad: float = 0.05) -> None:
+    """Apply a tight y-range so nearly-flat traces stay visually flat on their own axis."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return
+
+    y_min = float(np.min(arr))
+    y_max = float(np.max(arr))
+    span = y_max - y_min
+    pad = max(span * 0.15, min_pad)
+    ax.set_ylim(y_min - pad, y_max + pad)
 
 # ============================================================================
 # Entry point

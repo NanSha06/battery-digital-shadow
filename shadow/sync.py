@@ -1,10 +1,8 @@
 """
-shadow/sync.py — Online Shadow Synchronisation Loop (FINAL VERSION)
+shadow/sync.py — FINAL VERSION with Physically Correct Increasing Resistance
 ====================================================
-- Uses real LSTM AgeingEmulator
-- Forces R0 to be non-decreasing (physical constraint)
-- Returns R0, R1, R2 in state for validate.py's new plots
-- Compatible with the latest validate.py (FIX E/F/G)
+R0 now follows the correct ageing law: R0(k) = r0_fresh * (1 + α * k^β)
+R0 is forced non-decreasing via maximum.accumulate
 """
 
 import sys
@@ -78,7 +76,7 @@ except ImportError:
         def predict(self, *a): return 0.0, 1e-6
 
 try:
-    from augmentation.lstm import AgeingEmulator   # REAL LSTM
+    from augmentation.lstm import AgeingEmulator
 except ImportError:
     class AgeingEmulator:                          # type: ignore
         def __init__(self, config_path="config.yaml"): pass
@@ -172,6 +170,11 @@ class ShadowSync:
         self._R0_wrls  = float(ecm_params.get("R0", 0.015))
         self._P_wrls   = float(cfg.get("wrls", {}).get("P_init", 1e-3))
 
+        # === PHYSICAL AGEING PARAMETERS (from your message) ===
+        self._r0_fresh       = 0.015
+        self._r0_growth_rate = 0.0003      # α
+        self._r0_exponent    = 0.5         # β
+
         self._k0       = float(cfg.get("cusum", {}).get("k0", 0.002))
         self._cusum_h  = float(cfg.get("cusum", {}).get("threshold_h", 5.0))
         self._cusum    = 0.0
@@ -227,7 +230,7 @@ class ShadowSync:
         sq_errors = []
         soc_t = V1_t = V2_t = 0.0
 
-        # NORMALISE CURRENT SIGN
+        # NORMALISE CURRENT SIGN (NASA convention)
         I_arr = np.where(I_arr < 0, I_arr, -I_arr)
 
         for k in range(N):
@@ -262,7 +265,14 @@ class ShadowSync:
         C_max_meas = cycle.get("C_max")
         soh = float(C_max_meas) / C_nom if C_max_meas is not None and C_nom > 0 else 1.0
 
-        # === LSTM RUL with PHYSICAL CONSTRAINT (R0 non-decreasing) ===
+        # === PHYSICALLY CORRECT R0 AGEING (R0 increases with cycle) ===
+        # Parametric law: R0(k) = r0_fresh * (1 + α * k^β)
+        k = float(cycle_idx)
+        r0_phys = self._r0_fresh * (1.0 + self._r0_growth_rate * k ** self._r0_exponent)
+        # Force monotonic increase (never allow R0 to drop below previous value)
+        self._R0_wrls = max(self._R0_wrls, r0_phys)
+
+        # === LSTM RUL with forced increasing R0 ===
         theta_now = np.array([
             self._R0_wrls,
             float(self._ecm_params.get("R1", 0.010)),
@@ -272,7 +282,7 @@ class ShadowSync:
         ])
         try:
             future_theta = self.age_emu.rollout(theta_now, n_steps=1200)
-            r0_future = np.maximum.accumulate(future_theta[:, 0])   # FORCE non-decreasing
+            r0_future = np.maximum.accumulate(future_theta[:, 0])   # monotonic
             fade_factor = 0.22
             future_soh = 1.0 - fade_factor * (r0_future - theta_now[0]) / max(theta_now[0], 0.001)
             eol_thr = float(self._cfg.get("monte_carlo", {}).get("eol_threshold", 0.80))
@@ -292,7 +302,7 @@ class ShadowSync:
             "rul_mean": round(rul_mean, 1),
             "rul_ci_lower": round(rul_lower, 1),
             "rul_ci_upper": round(rul_upper, 1),
-            "R0": round(self._R0_wrls, 6),          # needed by validate.py
+            "R0": round(self._R0_wrls, 6),
             "rmse": round(rmse, 8),
             "cusum": round(self._cusum, 8),
             "mode_flags": json.dumps({**mode_dict, "cusum_triggered": cusum_triggered}),
@@ -309,6 +319,7 @@ class ShadowSync:
 
         return {**row, "mode_flags": json.loads(row["mode_flags"])}
 
+    # (get_state, fit, predict, update, close, __repr__ unchanged)
     def get_state(self) -> dict | None:
         cur = self._con.execute(_LATEST_ROW)
         row = cur.fetchone()
@@ -345,6 +356,6 @@ class ShadowSync:
 
 if __name__ == "__main__":
     print("=" * 68)
-    print("  shadow/sync.py — Smoke Test (real LSTM RUL + non-decreasing R0)")
+    print("  shadow/sync.py — Smoke Test (R0 now physically increasing)")
     print("=" * 68)
     print("✅ Ready to run validate.py")

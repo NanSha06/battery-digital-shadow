@@ -7,3 +7,6 @@ gpytorch
 matplotlib
 pytest
 scikit-learn
+sqlalchemy
+psycopg2-binary
+streamlit
