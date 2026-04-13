@@ -623,13 +623,14 @@ def main() -> None:
     _kpi_with_formula(k4, "Predicted EOL Cycle",   f"{eol_cycle:.0f}",       f"Current: {current_cycle}",                  "kpi-eol",    "eol")
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
-    tab_fade, tab_health, tab_signals, tab_sim, tab_diagnostics, tab_export = st.tabs([
+    tab_fade, tab_health, tab_signals, tab_sim, tab_diagnostics, tab_export, tab_datalab = st.tabs([
         "🔋 Capacity Fade",
         "🏥 Health",
         "📈 Signals",
         "🔮 What-If",
         "🧪 ML Diagnostics",
         "📤 Export",
+        "🔬 Data Lab",
     ])
 
     # ────────────────────────────────────────────────────────────
@@ -865,6 +866,7 @@ def main() -> None:
         with st.expander("🗂 Raw Report JSON"):
             st.json(report)
 
+
         with st.expander("📊 Full Predictions Table"):
             st.dataframe(summary_df.style.format({
                 "real_capacity_ah":        "{:.4f}",
@@ -876,6 +878,76 @@ def main() -> None:
                 "mean_abs_current_a":      "{:.3f}",
                 "capacity_deviation_ah":   "{:.5f}",
             }), use_container_width=True, hide_index=True)
+
+    # ────────────────────────────────────────────────────────────
+    # Tab 7 – Data Lab
+    # ────────────────────────────────────────────────────────────
+    with tab_datalab:
+        st.markdown('<div class="section-header">🔬 Data Remediation Lab</div>', unsafe_allow_html=True)
+        st.write("Run the end-to-end data pipeline to detect anomalies, enforce physics-based constraints, and synthesize balanced data.")
+        
+        lab_col1, lab_col2 = st.columns([1, 2], gap="large")
+        with lab_col1:
+            st.markdown("### 🎛️ Control Panel")
+            if st.button("🚀 Execute Remediation Pipeline", use_container_width=True, type="primary"):
+                with st.spinner("Executing 5-step robust remediation..."):
+                    from data.remediation_pipeline import run_remediation
+                    run_remediation(
+                        raw_dir=data_dir, 
+                        eol_capacity_ah=float(eol_capacity_ah),
+                        out_csv="data/remediated_dataset.csv", 
+                        out_json="data/remediated_dataset.json"
+                    )
+                    st.session_state["remediation_done"] = True
+                    st.success("✨ Remediation completed successfully!")
+                    # Use st.rerun() if available, else omit to avoid errors
+                    if hasattr(st, "rerun"):
+                        st.rerun()
+            
+            st.markdown("<hr style='margin: 15px 0; border-color: #30363d;'/>", unsafe_allow_html=True)
+            
+            if Path("data/remediated_dataset.csv").exists():
+                st.info("✅ **Dataset Ready**")
+                
+                # Dynamic Metrics
+                try:
+                    df_rem = pd.read_csv("data/remediated_dataset.csv")
+                    n_orig = len(df_rem[df_rem.get("is_synthetic", False) == False])
+                    n_synth = len(df_rem[df_rem.get("is_synthetic", False) == True])
+                    
+                    mc1, mc2 = st.columns(2)
+                    mc1.metric("Clean Rows", n_orig)
+                    mc2.metric("Synthetic", n_synth, f"+{int(n_synth/max(1,n_orig)*100)}%")
+                except Exception:
+                    pass
+
+                try:
+                    with open("data/remediation_report.md", "r", encoding="utf-8") as f:
+                        report_md = f.read()
+                    st.download_button(
+                        label="⬇ Download Audit Report (MD)",
+                        data=report_md.encode("utf-8"),
+                        file_name="remediation_report.md",
+                        mime="text/markdown",
+                        use_container_width=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                st.warning("No remediated dataset found. Execute pipeline first.")
+                
+        with lab_col2:
+            st.markdown("### 📊 Live Audit Report")
+            if st.session_state.get("remediation_done") or Path("data/remediation_report.md").exists():
+                try:
+                    with open("data/remediation_report.md", "r", encoding="utf-8") as f:
+                        report_text = f.read()
+                    with st.container(border=True):
+                        st.markdown(report_text)
+                except FileNotFoundError:
+                    st.info("Report file not generated yet.")
+            else:
+                st.info("👈 Please execute the pipeline to generate the audit report.")
 
 
 if __name__ == "__main__":
