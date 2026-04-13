@@ -41,14 +41,12 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* ── Google font ── */
+    /* ── Typography (Google Fonts — Inter) ── */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-    /* ── Dark background ── */
-    .stApp { background: #0d1117; color: #e6edf3; }
-    section[data-testid="stSidebar"] { background: #161b22; border-right: 1px solid #30363d; }
+    /* ── Sidebar refinement ── */
+    section[data-testid="stSidebar"] { border-right: 1px solid #30363d; }
 
     /* ── KPI Cards ── */
     .kpi-card {
@@ -67,19 +65,17 @@ st.markdown(
     }
     .kpi-card::before {
         content: "";
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 3px;
-        border-radius: 14px 14px 0 0;
+        position: absolute; top: 0; left: 0; right: 0;
+        height: 3px; border-radius: 14px 14px 0 0;
     }
     .kpi-soh::before    { background: linear-gradient(90deg, #22c55e, #16a34a); }
     .kpi-resist::before { background: linear-gradient(90deg, #ef4444, #dc2626); }
     .kpi-rul::before    { background: linear-gradient(90deg, #6366f1, #4f46e5); }
     .kpi-eol::before    { background: linear-gradient(90deg, #f59e0b, #d97706); }
 
-    .kpi-label  { font-size: 0.72rem; font-weight: 500; color: #8b949e; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
-    .kpi-value  { font-size: 1.85rem; font-weight: 700; color: #e6edf3; }
-    .kpi-delta  { font-size: 0.78rem; color: #8b949e; margin-top: 4px; }
+    .kpi-label { font-size: 0.72rem; font-weight: 500; color: #8b949e; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+    .kpi-value { font-size: 1.85rem; font-weight: 700; }
+    .kpi-delta { font-size: 0.78rem; color: #8b949e; margin-top: 4px; }
 
     /* ── Section headers ── */
     .section-header {
@@ -90,20 +86,11 @@ st.markdown(
     }
 
     /* ── Health bar ── */
-    .health-bar-outer {
-        background: #21262d; border-radius: 8px; height: 10px;
-        margin-top: 6px; overflow: hidden;
-    }
-    .health-bar-inner {
-        height: 100%; border-radius: 8px;
-        transition: width 0.6s ease;
-    }
+    .health-bar-outer { background: #21262d; border-radius: 8px; height: 10px; margin-top: 6px; overflow: hidden; }
+    .health-bar-inner { height: 100%; border-radius: 8px; transition: width 0.6s ease; }
 
     /* ── Quality badge ── */
-    .badge {
-        display: inline-block; padding: 2px 10px; border-radius: 12px;
-        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
-    }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; }
     .badge-green  { background: #0f4c24; color: #3fb950; }
     .badge-yellow { background: #4a3500; color: #f0a93a; }
     .badge-red    { background: #4a0c0c; color: #f85149; }

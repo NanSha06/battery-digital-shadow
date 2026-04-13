@@ -1,0 +1,18 @@
+[theme]
+# GitHub-dark inspired palette — matches our custom CSS design system
+primaryColor = "#3b82f6"          # Blue accent (buttons, sliders, links)
+backgroundColor = "#0d1117"       # Main canvas
+secondaryBackgroundColor = "#161b22"  # Sidebar, cards, expanders
+textColor = "#e6edf3"             # Primary text
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
