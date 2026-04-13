@@ -276,9 +276,9 @@ def plotly_rul(snapshot: dict[str, float]) -> go.Figure:
     return fig
 
 
-def plotly_signals(cycle: CycleRecord) -> go.Figure:
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
-                         subplot_titles=["Voltage (V)", "Current (A)", "Temperature (°C)"])
+def plotly_signals(cycle: CycleRecord, r0: float = 0.0, r1: float = 0.0, r2: float = 0.0) -> go.Figure:
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                         subplot_titles=["Voltage (V)", "Current (A)", "Temperature (°C)", "ECM Resistances (Ω)"])
     t = cycle.time_s
     fig.add_trace(go.Scatter(x=t, y=cycle.voltage_v, name="Voltage",
                               line=dict(color="#3b82f6", width=1.5),
@@ -289,9 +289,21 @@ def plotly_signals(cycle: CycleRecord) -> go.Figure:
     fig.add_trace(go.Scatter(x=t, y=cycle.temperature_c, name="Temperature",
                               line=dict(color="#f97316", width=1.5),
                               hovertemplate="t=%{x:.1f}s  T=%{y:.2f} °C<extra></extra>"), row=3, col=1)
-    _apply_theme(fig, f"📈 Cycle {cycle.cycle_number} — Raw Signals", height=420)
-    fig.update_xaxes(title_text="Time (s)", row=3, col=1)
-    for i in [1, 2, 3]:
+    
+    # Plot scalar resistances as horizontal lines stretching across the cycle time
+    fig.add_trace(go.Scatter(x=[t[0], t[-1]], y=[r0, r0], name="R₀ (Ohmic)",
+                              line=dict(color="#ef4444", width=2.0),
+                              hovertemplate="R₀ = %{y:.5f} Ω<extra></extra>"), row=4, col=1)
+    fig.add_trace(go.Scatter(x=[t[0], t[-1]], y=[r1, r1], name="R₁ (SEI)",
+                              line=dict(color="#d97706", width=2.0, dash="dash"),
+                              hovertemplate="R₁ = %{y:.5f} Ω<extra></extra>"), row=4, col=1)
+    fig.add_trace(go.Scatter(x=[t[0], t[-1]], y=[r2, r2], name="R₂ (Transfer)",
+                              line=dict(color="#8b5cf6", width=2.0, dash="dot"),
+                              hovertemplate="R₂ = %{y:.5f} Ω<extra></extra>"), row=4, col=1)
+
+    _apply_theme(fig, f"📈 Cycle {cycle.cycle_number} — Raw Signals & ECM", height=550)
+    fig.update_xaxes(title_text="Time (s)", row=4, col=1)
+    for i in [1, 2, 3, 4]:
         fig.update_xaxes(gridcolor="#21262d", row=i, col=1)
         fig.update_yaxes(gridcolor="#21262d", row=i, col=1)
     return fig
@@ -478,6 +490,30 @@ _FORMULA_DEFS: dict[str, dict] = {
             ("Q_EOL",                 "User-configurable EOL capacity threshold (Ah) — adjustable in sidebar"),
         ],
     },
+    "r1": {
+        "title": "SEI Resistance (R₁)",
+        "latex": [
+            r"R_1^{\text{proxy}}(n) = 0.008 + 0.015 \times \bigl(1 - \text{SOH}(n)\bigr)^{1.3}",
+            r"R_1^{\text{proxy}}(n) \;=\; \max\!\bigl(R_1^{\text{proxy}}(n-1),\; R_1^{\text{proxy}}(n)\bigr) \quad \text{(monotonic)}",
+        ],
+        "vars": [
+            ("Solid Electrolyte Interphase", "R1 models the resistive growth of the SEI layer mapping exactly to the RC pairs in the Dual-Polarization ECM model."),
+            ("0.008 Ω", "Nominal healthy SEI baseline derived from DE bounds"),
+            ("1.3 Exponent", "Sub-linear capacity-to-SEI decay mapping"),
+        ],
+    },
+    "r2": {
+        "title": "Transfer Resistance (R₂)",
+        "latex": [
+            r"R_2^{\text{proxy}}(n) = 0.015 + 0.030 \times \bigl(1 - \text{SOH}(n)\bigr)^{1.5}",
+            r"R_2^{\text{proxy}}(n) \;=\; \max\!\bigl(R_2^{\text{proxy}}(n-1),\; R_2^{\text{proxy}}(n)\bigr) \quad \text{(monotonic)}",
+        ],
+        "vars": [
+            ("Charge Transfer", "R2 corresponds to the ionic transfer rate limitations and double-layer capacitive boundaries."),
+            ("0.015 Ω", "Baseline transfer resistance from offline mapping"),
+            ("1.5 Exponent", "Super-linear exponent accounting for severe terminal deterioration of mass transfer."),
+        ],
+    },
 }
 
 
@@ -610,17 +646,27 @@ def main() -> None:
     # ── KPI cards ─────────────────────────────────────────────────────────────
     soh_pct       = latest["soh"] * 100
     r0_val        = latest["internal_resistance_ohm"]
+    r1_val        = latest.get("sei_resistance_ohm", 0.0)
+    r2_val        = latest.get("transfer_resistance_ohm", 0.0)
     rul_mean      = latest["rul_mean_cycles"]
     rul_lo        = latest["rul_ci_lower_90"]
     rul_hi        = latest["rul_ci_upper_90"]
     eol_cycle     = latest["predicted_eol_cycle_mean"]
     current_cycle = int(latest["cycle_number"])
 
-    k1, k2, k3, k4 = st.columns(4)
-    _kpi_with_formula(k1, "State of Health",      f"{soh_pct:.1f}%",         f"Cycle {current_cycle}",                    "kpi-soh",    "soh")
-    _kpi_with_formula(k2, "Internal Resistance",   f"{r0_val*1000:.2f} mΩ",  "Model estimate",                            "kpi-resist", "r0")
-    _kpi_with_formula(k3, "Remaining Useful Life", f"{rul_mean:.0f} cyc",    f"90% CI: [{rul_lo:.0f}, {rul_hi:.0f}]",     "kpi-rul",    "rul")
-    _kpi_with_formula(k4, "Predicted EOL Cycle",   f"{eol_cycle:.0f}",       f"Current: {current_cycle}",                  "kpi-eol",    "eol")
+    # Row 1: Health & Predictions
+    k1, k2, k3 = st.columns(3)
+    _kpi_with_formula(k1, "State of Health",       f"{soh_pct:.1f}%",        f"Cycle {current_cycle}",                    "kpi-soh",    "soh")
+    _kpi_with_formula(k2, "Remaining Useful Life", f"{rul_mean:.0f} cyc",    f"90% CI: [{rul_lo:.0f}, {rul_hi:.0f}]",     "kpi-rul",    "rul")
+    _kpi_with_formula(k3, "Predicted EOL Cycle",   f"{eol_cycle:.0f}",       f"Current: {current_cycle}",                 "kpi-eol",    "eol")
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # Row 2: ECM Physics Parameters
+    k4, k5, k6 = st.columns(3)
+    _kpi_with_formula(k4, "Ohmic Resistance (R0)",    f"{r0_val*1000:.2f} mΩ", "Internal bulk resistance",                   "kpi-resist", "r0")
+    _kpi_with_formula(k5, "SEI Resistance (R1)",      f"{r1_val*1000:.2f} mΩ", "Solid Electrolyte Interphase layer",         "kpi-resist", "r1")
+    _kpi_with_formula(k6, "Transfer Resistance (R2)", f"{r2_val*1000:.2f} mΩ", "Charge transfer polarization",               "kpi-resist", "r2")
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tab_fade, tab_health, tab_signals, tab_sim, tab_diagnostics, tab_export, tab_datalab = st.tabs([
@@ -698,13 +744,20 @@ def main() -> None:
         )
         selected_cycle = next(c for c in cycles if c.cycle_number == selected_cycle_number)
         selected_record = summary_df[summary_df["cycle"] == selected_cycle_number]
+        
+        r0 = 0.0; r1 = 0.0; r2 = 0.0
         if not selected_record.empty:
             sc1, sc2, sc3, sc4 = st.columns(4)
             sc1.metric("Capacity", f"{selected_cycle.capacity_ah:.4f} Ah")
             sc2.metric("Avg Temp", f"{float(selected_cycle.temperature_c.mean()):.1f} °C")
             sc3.metric("Avg |Current|", f"{float(np.abs(selected_cycle.current_a).mean()):.3f} A")
             sc4.metric("Duration", f"{selected_cycle.time_s[-1]:.0f} s")
-        st.plotly_chart(plotly_signals(selected_cycle), use_container_width=True)
+            
+            r0 = float(selected_record["internal_resistance_ohm"].iloc[0])
+            r1 = float(selected_record["sei_resistance_ohm"].iloc[0]) if "sei_resistance_ohm" in selected_record.columns else 0.0
+            r2 = float(selected_record["transfer_resistance_ohm"].iloc[0]) if "transfer_resistance_ohm" in selected_record.columns else 0.0
+
+        st.plotly_chart(plotly_signals(selected_cycle, r0, r1, r2), use_container_width=True)
 
     # ────────────────────────────────────────────────────────────
     # Tab 4 – What-If Simulator

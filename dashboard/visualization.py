@@ -77,15 +77,30 @@ def plot_health_indicators(summary_df: pd.DataFrame) -> plt.Figure:
         summary_df["internal_resistance_ohm"],
         color="#B91C1C",
         linewidth=1.8,
+        label="R0 (Ohmic)",
+    )[0]
+    l3 = ax2.plot(
+        summary_df["cycle"],
+        summary_df.get("sei_resistance_ohm", summary_df["internal_resistance_ohm"] * 0.0),
+        color="#D97706",
+        linewidth=1.8,
         linestyle="--",
-        label="Internal Resistance",
+        label="R1 (SEI)",
+    )[0]
+    l4 = ax2.plot(
+        summary_df["cycle"],
+        summary_df.get("transfer_resistance_ohm", summary_df["internal_resistance_ohm"] * 0.0),
+        color="#7C3AED",
+        linewidth=1.8,
+        linestyle=":",
+        label="R2 (Transfer)",
     )[0]
     ax1.set_xlabel("Cycle")
     ax1.set_ylabel("SOH")
-    ax2.set_ylabel("R0 (Ohm)")
-    ax1.set_title("Health Indicators")
+    ax2.set_ylabel("Resistance (Ohm)")
+    ax1.set_title("Health Indicators & ECM Parameters")
     ax1.grid(alpha=0.3)
-    ax1.legend([l1, l2], ["SOH", "Internal Resistance"], loc="best")
+    ax1.legend([l1, l2, l3, l4], ["SOH", "R0 (Ohmic)", "R1 (SEI)", "R2 (Transfer)"], loc="center left")
     fig.tight_layout()
     return fig
 

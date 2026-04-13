@@ -137,6 +137,8 @@ class _FitResult:
     nominal_capacity_ah: float
     quality_report:      DataQualityReport
     model_r0:            np.ndarray
+    model_r1:            np.ndarray
+    model_r2:            np.ndarray
     twin_capacity:       np.ndarray
     real_soh:            np.ndarray
 
@@ -179,6 +181,12 @@ def fit_twin_models(cycles: list[CycleRecord]) -> _FitResult:
     resistance_proxy = 0.012 + 0.025 * np.power(np.clip(1.0 - real_soh, 0.0, 1.0), 1.2)
     resistance_proxy = np.maximum.accumulate(resistance_proxy)
 
+    r1_proxy = 0.008 + 0.015 * np.power(np.clip(1.0 - real_soh, 0.0, 1.0), 1.3)
+    r1_proxy = np.maximum.accumulate(r1_proxy)
+
+    r2_proxy = 0.015 + 0.030 * np.power(np.clip(1.0 - real_soh, 0.0, 1.0), 1.5)
+    r2_proxy = np.maximum.accumulate(r2_proxy)
+
     # Accumulate (O(N), no refit per cycle)
     resistance_model = InternalResistanceGrowthModel()
     fade_model       = HybridCapacityFadeModel(eol_capacity_ah=0.0)   # EOL set later
@@ -210,6 +218,8 @@ def fit_twin_models(cycles: list[CycleRecord]) -> _FitResult:
         nominal_capacity_ah=nominal_capacity_ah,
         quality_report=quality_report,
         model_r0=model_r0,
+        model_r1=r1_proxy,
+        model_r2=r2_proxy,
         twin_capacity=twin_capacity,
         real_soh=real_soh,
     )
@@ -238,6 +248,8 @@ def compute_eol_artifacts(fit: _FitResult, eol_capacity_ah: float) -> TwinArtifa
     twin_capacity = fit.twin_capacity
     real_soh      = fit.real_soh
     model_r0      = fit.model_r0
+    model_r1      = fit.model_r1
+    model_r2      = fit.model_r2
     mean_temp_c   = fit.mean_temp_c
     nominal_capacity_ah = fit.nominal_capacity_ah
 
@@ -256,6 +268,8 @@ def compute_eol_artifacts(fit: _FitResult, eol_capacity_ah: float) -> TwinArtifa
         "capacity_ah":              float(capacity_ah[-1]),
         "soh":                      float(real_soh[-1]),
         "internal_resistance_ohm":  float(model_r0[-1]),
+        "sei_resistance_ohm":       float(model_r1[-1]),
+        "transfer_resistance_ohm":  float(model_r2[-1]),
         "rul_mean_cycles":          float(rul.mean_rul_cycles),
         "rul_ci_lower_90":          float(rul.ci_lower_90),
         "rul_ci_upper_90":          float(rul.ci_upper_90),
@@ -284,6 +298,8 @@ def compute_eol_artifacts(fit: _FitResult, eol_capacity_ah: float) -> TwinArtifa
         "real_soh":                real_soh,
         "twin_soh":                twin_soh,
         "internal_resistance_ohm": model_r0,
+        "sei_resistance_ohm":      model_r1,
+        "transfer_resistance_ohm": model_r2,
         "mean_temperature_c":      mean_temp_c,
         "mean_abs_current_a":      fit.mean_abs_current_a,
         "capacity_deviation_ah":   deviations,

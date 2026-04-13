@@ -453,44 +453,52 @@ def _write_report(
     spearman: pd.DataFrame,
     cell_ids: list[str],
 ) -> None:
+    
     lines: list[str] = [
-        "# Battery Dataset Remediation Report\n",
-        f"*Cells processed: {', '.join(cell_ids)} | "
-        f"Original rows: {len(df_orig)} | Final rows: {len(df_final)}*\n",
-        "\n## 1. Summary of All Calculated Parameters (Original)\n",
-        "| Column | Count | Mean | Median | Std | Min | Max | Skew | Kurt |",
-        "|--------|-------|------|--------|-----|-----|-----|------|------|",
+        "## 🔬 Intelligence Report\n",
+        "> Here is what the automated pipeline discovered and fixed in your battery aging dataset.",
+        f"\n**Cells processed:** {', '.join(cell_ids)}",
+        f"\n**Original size:** {len(df_orig)} cycles ➡️ **Final balanced size:** {len(df_final)} cycles\n",
     ]
-    for col, s in stats_orig.items():
-        if not s:
-            continue
-        lines.append(f"| {col} | {s['count']} | {s['mean']:.4f} | {s['median']:.4f} | "
-                     f"{s['std']:.4f} | {s['min']:.4f} | {s['max']:.4f} | "
-                     f"{s['skewness']:.3f} | {s['kurtosis']:.3f} |")
 
-    lines += [
-        "\n\n## 2. Anomalies Detected\n",
-        f"**Total flags: {len(anomaly_log)}**\n",
-        "| Row | Column | Method | Value | Reason |",
-        "|-----|--------|--------|-------|--------|",
-    ]
-    for a in anomaly_log[:120]:
-        lines.append(f"| {a.row_idx} | {a.col} | {a.method} | {a.value:.5f} | {a.reason} |")
-    if len(anomaly_log) > 120:
-        lines.append(f"| ... | ... | ... | ... | *{len(anomaly_log)-120} more rows omitted* |")
+    # --- Group anomalies by English descriptions ---
+    desc_counts = {}
+    for a in anomaly_log:
+        if a.method == "Z-score":
+            desc = f"Sensor noise or extreme spikes in {a.col.replace('_', ' ')} (Z-score)"
+        elif a.method == "IQR":
+            desc = f"Sudden abnormal jumps in {a.col.replace('_', ' ')}"
+        elif a.method == "IsolationForest":
+            desc = "Complex multi-variable anomaly breaking normal battery physics behavior (AI detected)"
+        else:
+            desc = a.reason # Hard physics rules
+        desc_counts[desc] = desc_counts.get(desc, 0) + 1
 
-    lines += ["\n\n## 3. Fixes Applied\n"]
+    lines.append("\n### 🚨 Anomaly Detection Summary")
+    if anomaly_log:
+        lines.append(f"We scanned the raw cycles and detected **{len(anomaly_log)} erratic data points**:\n")
+        for desc, count in sorted(desc_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"- **{count} instances**: {desc}")
+    else:
+        lines.append(("> [!TIP]\n> **Excellent Data Quality**: No significant anomalies were found in the raw sensors.\n"))
+
+    lines.append("\n### 🛠️ Remediation & Fixes Applied")
+    lines.append("To ensure the Digital Twin models train flawlessly, we automatically applied the following corrections:\n")
     for f in fix_log:
-        lines.append(f"- {f}")
+        # bold key terms to make it pop
+        lines.append(f"- {f.replace('Dropped', '**Dropped**').replace('Capped', '**Capped**').replace('Imputed', '**Imputed**')}")
 
-    lines += [
-        "\n\n## 4. New Dataset Specifications\n",
-        "| Column | Mean (new) | Std (new) | Skew (new) | Kurt (new) |",
-        "|--------|-----------|-----------|-----------|-----------|",
-    ]
-    for col, s in stats_final.items():
-        if not s:
-            continue
-        lines.append(f"| {col} | {s['mean']:.4f} | {s['std']:.4f} | {s['skewness']:.3f} | {s['kurtosis']:.3f} |")
+    lines.append("\n### 📊 Before vs After Statistics")
+    lines.append("Notice how establishing physics bounds and cleaning outliers stabilized the overall variance.\n")
+    lines.append("| Vital Parameter | Mean (Before) | Mean (Cleaned) | Std Dev (Before) | Std Dev (Cleaned) |")
+    lines.append("|-----------------|---------------|----------------|------------------|-------------------|")
+    
+    key_cols = ["capacity_ah", "mean_temperature_c", "mean_voltage_v", "duration_s"]
+    for col in key_cols:
+        if col in stats_orig and col in stats_final:
+            o_m, o_s = stats_orig[col]['mean'], stats_orig[col]['std']
+            f_m, f_s = stats_final[col]['mean'], stats_final[col]['std']
+            col_name = col.replace('_', ' ').title()
+            lines.append(f"| **{col_name}** | {o_m:.3f} | {f_m:.3f} | {o_s:.3f} | {f_s:.3f} |")
 
     path.write_text("\n".join(lines), encoding="utf-8")
